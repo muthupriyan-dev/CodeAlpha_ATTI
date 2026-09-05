@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATTI — Signal Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  :root{
+    --bg:#12151A;
+    --panel:#1B1F26;
+    --panel-raised:#232833;
+    --line:#2C323D;
+    --text:#E8EAED;
+    --muted:#8A93A3;
+    --signal:#3FD6C4;
+    --signal-dim:#245F58;
+    --danger:#E5484D;
+    --warn:#E8B34C;
+    --radius:10px;
+    font-family:'IBM Plex Sans', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+  }
+  code, .mono{font-family:'IBM Plex Mono', monospace;}
+
+  /* ---------- Top bar ---------- */
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 22px;
+    border-bottom:1px solid var(--line);
+    background:var(--panel);
+  }
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand-mark{
+    width:10px; height:10px; border-radius:50%;
+    background:var(--signal);
+    box-shadow:0 0 0 3px var(--signal-dim);
+  }
+  .brand-name{font-weight:700; letter-spacing:0.2px; font-size:16px;}
+  .brand-sub{color:var(--muted); font-size:12px; margin-left:8px;}
+  #whoami{font-size:13px; color:var(--muted);}
+  #whoami .mono{color:var(--text);}
+
+  /* ---------- Auth screen ---------- */
+  #authScreen{
+    flex:1; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .auth-card{
+    width:100%; max-width:380px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:28px;
+  }
+  .auth-card h1{font-size:19px; margin:0 0 4px;}
+  .auth-card p.lede{color:var(--muted); font-size:13px; margin:0 0 22px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px;}
+  .field input{
+    width:100%; padding:10px 12px;
+    background:var(--panel-raised);
+    border:1px solid var(--line);
+    border-radius:7px;
+    color:var(--text); font-size:14px;
+    font-family:inherit;
+  }
+  .field input:focus{outline:none; border-color:var(--signal);}
+  .btn{
+    width:100%; padding:11px;
+    border-radius:7px; border:none;
+    background:var(--signal); color:#0B1613;
+    font-weight:600; font-size:14px; cursor:pointer;
+    font-family:inherit;
+  }
+  .btn:hover{filter:brightness(1.08);}
+  .btn.secondary{background:transparent; border:1px solid var(--line); color:var(--text);}
+  .btn.danger{background:var(--danger); color:#fff;}
+  .switch-mode{text-align:center; margin-top:16px; font-size:13px; color:var(--muted);}
+  .switch-mode a{color:var(--signal); cursor:pointer; text-decoration:none;}
+  .error-msg{color:var(--danger); font-size:12.5px; margin-top:10px; min-height:16px;}
+
+  /* ---------- Room join (after auth, before call) ---------- */
+  #roomScreen{flex:1; display:none; align-items:center; justify-content:center; padding:24px;}
+  #roomScreen.active{display:flex;}
+
+  /* ---------- Call screen ---------- */
+  #callScreen{flex:1; display:none; flex-direction:column;}
+  #callScreen.active{display:flex;}
+
+  .call-top{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 20px; border-bottom:1px solid var(--line);
+    font-size:13px; color:var(--muted);
+  }
+  .room-tag{display:flex; align-items:center; gap:8px;}
+  .room-tag .mono{color:var(--signal);}
+
+  .call-body{
+    flex:1; display:flex; min-height:0;
+  }
+  #videoGrid{
+    flex:1; display:grid; gap:10px; padding:14px;
+    grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
+    align-content:start;
+    overflow-y:auto;
+  }
+  .tile{
+    position:relative; background:#000; border-radius:var(--radius);
+    overflow:hidden; border:1px solid var(--line); aspect-ratio:16/10;
+  }
+  .tile video{width:100%; height:100%; object-fit:cover;}
+  .tile .tag{
+    position:absolute; bottom:8px; left:8px;
+    background:rgba(0,0,0,0.55); padding:3px 9px; border-radius:5px;
+    font-size:12px;
+  }
+  .tile.speaking{border-color:var(--signal);}
+
+  #sidePanel{
+    width:300px; border-left:1px solid var(--line);
+    display:none; flex-direction:column; background:var(--panel);
+  }
+  #sidePanel.open{display:flex;}
+  .side-tabs{display:flex; border-bottom:1px solid var(--line);}
+  .side-tab{
+    flex:1; text-align:center; padding:11px 0; font-size:13px; cursor:pointer;
+    color:var(--muted); border-bottom:2px solid transparent;
+  }
+  .side-tab.active{color:var(--text); border-bottom-color:var(--signal);}
+  .side-pane{flex:1; min-height:0; display:none; flex-direction:column;}
+  .side-pane.active{display:flex;}
+
+  /* chat */
+  #chatLog{flex:1; overflow-y:auto; padding:12px; font-size:13px;}
+  #chatLog .msg{margin-bottom:10px;}
+  #chatLog .msg .who{color:var(--signal); font-size:11.5px; display:block; margin-bottom:2px;}
+  .chat-input-row{display:flex; border-top:1px solid var(--line); padding:8px;}
+  .chat-input-row input{
+    flex:1; background:var(--panel-raised); border:1px solid var(--line);
+    border-radius:6px; padding:8px; color:var(--text); font-family:inherit; font-size:13px;
+  }
+  .chat-input-row button{margin-left:6px; padding:0 12px; border-radius:6px; border:none; background:var(--signal); color:#0B1613; cursor:pointer;}
+
+  /* files */
+  #filePane{padding:12px; overflow-y:auto; flex:1;}
+  .file-drop{
+    border:1.5px dashed var(--line); border-radius:8px; padding:18px;
+    text-align:center; font-size:12.5px; color:var(--muted); cursor:pointer;
+  }
+  .file-drop:hover{border-color:var(--signal);}
+  #fileList .file-item{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel-raised); padding:8px 10px; border-radius:6px; margin-top:8px; font-size:12.5px;
+  }
+  .file-item a{color:var(--signal); text-decoration:none;}
+  .progress-bar{height:3px; background:var(--line); border-radius:2px; margin-top:4px; overflow:hidden;}
+  .progress-fill{height:100%; background:var(--signal); width:0%;}
+
+  /* whiteboard */
+  #whiteboardWrap{display:none; flex:1; padding:12px; flex-direction:column;}
+  #whiteboardWrap.active{display:flex;}
+  #wbToolbar{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
+  #wbToolbar input[type=color]{width:28px; height:28px; border:none; background:none; padding:0;}
+  #wbToolbar input[type=range]{width:70px;}
+  #whiteboardCanvas{
+    flex:1; background:#fff; border-radius:8px; touch-action:none; width:100%;
+  }
+
+  /* controls */
+  .controls{
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    padding:14px; border-top:1px solid var(--line);
+  }
+  .ctrl-btn{
+    width:44px; height:44px; border-radius:50%;
+    background:var(--panel-raised); border:1px solid var(--line);
+    color:var(--text); font-size:17px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ctrl-btn:hover{border-color:var(--signal);}
+  .ctrl-btn.off{background:var(--danger); border-color:var(--danger);}
+  .ctrl-btn.leave{background:var(--danger); border-color:var(--danger); width:auto; border-radius:22px; padding:0 18px; gap:6px; font-size:13px;}
+  .ctrl-btn.active-tool{background:var(--signal); color:#0B1613; border-color:var(--signal);}
+
+  .hint{font-size:11.5px; color:var(--muted); margin-top:10px; line-height:1.5;}
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div class="brand-name">ATTI</div>
+    <div class="brand-sub">real-time signal room</div>
+  </div>
+  <div id="whoami"></div>
+</header>
+
+<!-- AUTH -->
+<div id="authScreen">
+  <div class="auth-card">
+    <h1 id="authTitle">Sign in</h1>
+    <p class="lede" id="authLede">Authenticate to enter a room. Media stays end-to-end between peers — this server never sees your video.</p>
+    <div class="field">
+      <label>Username</label>
+      <input id="authUser" type="text" autocomplete="username" placeholder="e.g. muthu">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="authPass" type="password" autocomplete="current-password" placeholder="••••••••">
+    </div>
+    <button class="btn" id="authSubmit">Sign in</button>
+    <div class="error-msg" id="authError"></div>
+    <div class="switch-mode">No account? <a id="toggleMode">Create one</a></div>
+  </div>
+</div>
+
+<!-- ROOM JOIN -->
+<div id="roomScreen">
+  <div class="auth-card">
+    <h1>Join a room</h1>
+    <p class="lede">Share the room code with whoever should join this call.</p>
+    <div class="field">
+      <label>Room code</label>
+      <input id="roomInput" class="mono" type="text" placeholder="e.g. team-standup or any code">
+    </div>
+    <button class="btn" id="joinBtn">Enter room</button>
+    <div class="hint">Anyone with this code and a valid login can join. Encryption note: video/audio/data all travel over WebRTC's built-in DTLS-SRTP — encrypted in transit by default, peer to peer.</div>
+  </div>
+</div>
+
+<!-- CALL -->
+<div id="callScreen">
+  <div class="call-top">
+    <div class="room-tag">Room: <span class="mono" id="roomLabel"></span></div>
+    <div id="peerCount">0 peers connected</div>
+  </div>
+  <div class="call-body">
+    <div id="videoGrid"></div>
+    <div id="sidePanel">
+      <div class="side-tabs">
+        <div class="side-tab active" data-pane="chatPane">Chat</div>
+        <div class="side-tab" data-pane="filePane">Files</div>
+      </div>
+      <div class="side-pane active" id="chatPane">
+        <div id="chatLog"></div>
+        <div class="chat-input-row">
+          <input id="chatInput" placeholder="Message the room…">
+          <button id="chatSend">Send</button>
+        </div>
+      </div>
+      <div class="side-pane" id="filePane">
+        <div class="file-drop" id="fileDrop">Tap to choose a file to send to everyone in the room</div>
+        <input type="file" id="fileInput" style="display:none">
+        <div id="fileList"></div>
+      </div>
+    </div>
+  </div>
+  <div id="whiteboardWrap">
+    <div id="wbToolbar">
+      <input type="color" id="wbColor" value="#1B1F26">
+      <input type="range" id="wbSize" min="1" max="20" value="3">
+      <button class="btn secondary" id="wbClear" style="width:auto; padding:6px 12px;">Clear board</button>
+    </div>
+    <canvas id="whiteboardCanvas"></canvas>
+  </div>
+  <div class="controls">
+    <button class="ctrl-btn" id="micBtn" title="Mute/unmute">🎙</button>
+    <button class="ctrl-btn" id="camBtn" title="Camera on/off">📷</button>
+    <button class="ctrl-btn" id="screenBtn" title="Share screen">🖥</button>
+    <button class="ctrl-btn" id="wbBtn" title="Whiteboard">✏️</button>
+    <button class="ctrl-btn" id="chatBtn" title="Chat & files">💬</button>
+    <button class="ctrl-btn leave" id="leaveBtn">Leave</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let mode = 'login'; // or 'register'
+let token = null, myUsername = null, currentRoom = null;
+let localStream = null, screenStream = null;
+let socket = null;
+const peers = {}; // socketId -> { pc, video element, username }
+const ICE_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+/* ---------------- Auth ---------------- */
+$('toggleMode').onclick = () => {
+  mode = mode === 'login' ? 'register' : 'login';
+  $('authTitle').textContent = mode === 'login' ? 'Sign in' : 'Create account';
+  $('authSubmit').textContent = mode === 'login' ? 'Sign in' : 'Create account';
+  $('toggleMode').textContent = mode === 'login' ? 'Create one' : 'Sign in instead';
+  $('authError').textContent = '';
+};
+
+$('authSubmit').onclick = async () => {
+  const username = $('authUser').value.trim();
+  const password = $('authPass').value;
+  $('authError').textContent = '';
+  try {
+    const res = await fetch(`/api/${mode === 'login' ? 'login' : 'register'}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { $('authError').textContent = data.error || 'Something went wrong.'; return; }
+    token = data.token; myUsername = data.username;
+    $('whoami').innerHTML = `Signed in as <span class="mono">${myUsername}</span>`;
+    $('authScreen').style.display = 'none';
+    $('roomScreen').classList.add('active');
+  } catch (e) {
+    $('authError').textContent = 'Could not reach the server.';
+  }
+};
+
+/* ---------------- Room join ---------------- */
+$('joinBtn').onclick = async () => {
+  const roomId = $('roomInput').value.trim();
+  if (!roomId) return;
+  currentRoom = roomId;
+  $('roomLabel').textContent = roomId;
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  } catch (e) {
+    alert('Camera/mic permission is needed to join the call.');
+    return;
+  }
+  addLocalTile();
+
+  $('roomScreen').classList.remove('active');
+  $('callScreen').classList.add('active');
+
+  socket = io();
+  wireSocket();
+  socket.emit('join-room', { roomId, token });
+  setupWhiteboard();
+};
+
+/* ---------------- Video tiles ---------------- */
+function addLocalTile() {
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.id = 'tile-local';
+  const video = document.createElement('video');
+  video.autoplay = true; video.muted = true; video.playsInline = true;
+  video.srcObject = localStream;
+  const tag = document.createElement('div');
+  tag.className = 'tag'; tag.textContent = `${myUsername} (you)`;
+  tile.appendChild(video); tile.appendChild(tag);
+  $('videoGrid').appendChild(tile);
+}
+
+function addRemoteTile(socketId, username) {
+  const tile = document.createElement('div');
+  tile.className = 'tile'; tile.id = `tile-${socketId}`;
+  const video = document.createElement('video');
+  video.autoplay = true; video.playsInline = true;
+  const tag = document.createElement('div');
+  tag.className = 'tag'; tag.textContent = username || 'guest';
+  tile.appendChild(video); tile.appendChild(tag);
+  $('videoGrid').appendChild(tile);
+  return video;
+}
+
+function removeTile(socketId) {
+  const el = document.getElementById(`tile-${socketId}`);
+  if (el) el.remove();
+}
+
+function updatePeerCount() {
+  $('peerCount').textContent = `${Object.keys(peers).length + 1} peer(s) connected`;
+}
+
+/* ---------------- WebRTC mesh ---------------- */
+function createPeerConnection(socketId, username, isInitiator) {
+  const pc = new RTCPeerConnection(ICE_CONFIG);
+  localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+
+  const remoteVideo = addRemoteTile(socketId, username);
+  peers[socketId] = { pc, video: remoteVideo, username };
+
+  pc.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+  pc.onicecandidate = (e) => {
+    if (e.candidate) socket.emit('signal', { to: socketId, data: { candidate: e.candidate } });
+  };
+
+  // Data channel for file transfer
+  if (isInitiator) {
+    const dc = pc.createDataChannel('files');
+    setupDataChannel(socketId, dc);
+  } else {
+    pc.ondatachannel = (e) => setupDataChannel(socketId, e.channel);
+  }
+
+  updatePeerCount();
+  return pc;
+}
+
+async function makeOffer(socketId, username) {
+  const pc = createPeerConnection(socketId, username, true);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit('signal', { to: socketId, data: { sdp: offer } });
+}
+
+function wireSocket() {
+  socket.on('auth-error', ({ error }) => { alert(error); location.reload(); });
+
+  socket.on('existing-peers', (list) => {
+    list.forEach((p) => makeOffer(p.socketId, p.username));
+  });
+
+  socket.on('peer-joined', ({ socketId, username }) => {
+    logChat(`— ${username} joined —`, true);
+  });
+
+  socket.on('signal', async ({ from, data, username }) => {
+    let entry = peers[from];
+    if (data.sdp) {
+      if (data.sdp.type === 'offer') {
+        const pc = entry ? entry.pc : createPeerConnection(from, username, false);
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { to: from, data: { sdp: answer } });
+      } else if (data.sdp.type === 'answer') {
+        await entry.pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      }
+    } else if (data.candidate && entry) {
+      try { await entry.pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (e) {}
+    }
+  });
+
+  socket.on('peer-left', ({ socketId, username }) => {
+    if (peers[socketId]) { peers[socketId].pc.close(); delete peers[socketId]; }
+    removeTile(socketId);
+    updatePeerCount();
+    logChat(`— ${username || 'someone'} left —`, true);
+  });
+
+  socket.on('chat-message', ({ from, msg }) => logChat(msg, false, from));
+  socket.on('whiteboard-draw', (p) => drawRemote(p));
+  socket.on('whiteboard-clear', () => clearBoardLocal());
+}
+
+/* ---------------- Controls: mic / cam / screen share ---------------- */
+let micOn = true, camOn = true, sharingScreen = false;
+
+$('micBtn').onclick = () => {
+  micOn = !micOn;
+  localStream.getAudioTracks().forEach((t) => t.enabled = micOn);
+  $('micBtn').classList.toggle('off', !micOn);
+};
+$('camBtn').onclick = () => {
+  camOn = !camOn;
+  localStream.getVideoTracks().forEach((t) => t.enabled = camOn);
+  $('camBtn').classList.toggle('off', !camOn);
+};
+
+$('screenBtn').onclick = async () => {
+  if (!sharingScreen) {
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    } catch (e) { return; }
+    const screenTrack = screenStream.getVideoTracks()[0];
+    Object.values(peers).forEach(({ pc }) => {
+      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) sender.replaceTrack(screenTrack);
+    });
+    document.querySelector('#tile-local video').srcObject = screenStream;
+    sharingScreen = true;
+    $('screenBtn').classList.add('active-tool');
+    screenTrack.onended = stopScreenShare;
+  } else {
+    stopScreenShare();
+  }
+};
+
+function stopScreenShare() {
+  const camTrack = localStream.getVideoTracks()[0];
+  Object.values(peers).forEach(({ pc }) => {
+    const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+    if (sender) sender.replaceTrack(camTrack);
+  });
+  document.querySelector('#tile-local video').srcObject = localStream;
+  if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
+  sharingScreen = false;
+  $('screenBtn').classList.remove('active-tool');
+}
+
+$('leaveBtn').onclick = () => location.reload();
+
+/* ---------------- Side panel: chat + files ---------------- */
+$('chatBtn').onclick = () => $('sidePanel').classList.toggle('open');
+document.querySelectorAll('.side-tab').forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll('.side-tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.side-pane').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    $(tab.dataset.pane).classList.add('active');
+  };
+});
+
+function logChat(msg, system, from) {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  if (system) {
+    div.style.color = 'var(--muted)'; div.style.fontSize = '12px';
+    div.textContent = msg;
+  } else {
+    div.innerHTML = `<span class="who">${from}</span>${msg}`;
+  }
+  $('chatLog').appendChild(div);
+  $('chatLog').scrollTop = $('chatLog').scrollHeight;
+}
+
+$('chatSend').onclick = sendChat;
+$('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+function sendChat() {
+  const val = $('chatInput').value.trim();
+  if (!val) return;
+  socket.emit('chat-message', val);
+  $('chatInput').value = '';
+}
+
+/* ---------------- File transfer over WebRTC DataChannel ---------------- */
+const CHUNK_SIZE = 16 * 1024;
+const dataChannels = {}; // socketId -> channel
+
+function setupDataChannel(socketId, dc) {
+  dc.binaryType = 'arraybuffer';
+  dataChannels[socketId] = dc;
+  let incoming = null;
+
+  dc.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      const meta = JSON.parse(e.data);
+      if (meta.type === 'file-start') {
+        incoming = { name: meta.name, size: meta.size, chunks: [], received: 0 };
+      } else if (meta.type === 'file-end' && incoming) {
+        const blob = new Blob(incoming.chunks);
+        addReceivedFile(incoming.name, blob);
+        incoming = null;
+      }
+    } else if (incoming) {
+      incoming.chunks.push(e.data);
+      incoming.received += e.data.byteLength;
+    }
+  };
+}
+
+$('fileDrop').onclick = () => $('fileInput').click();
+$('fileInput').onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  Object.values(dataChannels).forEach((dc) => {
+    if (dc.readyState !== 'open') return;
+    dc.send(JSON.stringify({ type: 'file-start', name: file.name, size: file.size }));
+    let offset = 0;
+    (function sendChunk() {
+      if (offset >= buf.byteLength) {
+        dc.send(JSON.stringify({ type: 'file-end' }));
+        return;
+      }
+      dc.send(buf.slice(offset, offset + CHUNK_SIZE));
+      offset += CHUNK_SIZE;
+      setTimeout(sendChunk, 0);
+    })();
+  });
+  addSentFileNote(file.name);
+};
+
+function addSentFileNote(name) {
+  const div = document.createElement('div');
+  div.className = 'file-item';
+  div.innerHTML = `<span>📤 Sent: ${name}</span>`;
+  $('fileList').prepend(div);
+}
+function addReceivedFile(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const div = document.createElement('div');
+  div.className = 'file-item';
+  div.innerHTML = `<span>📥 ${name}</span><a href="${url}" download="${name}">Save</a>`;
+  $('fileList').prepend(div);
+}
+
+/* ---------------- Whiteboard ---------------- */
+let wbCtx, drawing = false, wbActive = false;
+function setupWhiteboard() {
+  const canvas = $('whiteboardCanvas');
+  const resize = () => {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+  };
+  resize();
+  window.addEventListener('resize', resize);
+  wbCtx = canvas.getContext('2d');
+
+  const posFromEvent = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height };
+  };
+
+  let last = null;
+  const start = (e) => { drawing = true; last = posFromEvent(e); };
+  const move = (e) => {
+    if (!drawing) return;
+    const p = posFromEvent(e);
+    strokeLocal(last, p);
+    emitStroke(last, p);
+    last = p;
+  };
+  const end = () => { drawing = false; };
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start);
+  canvas.addEventListener('touchmove', move);
+  canvas.addEventListener('touchend', end);
+}
+
+function strokeLocal(from, to, color, size) {
+  const canvas = $('whiteboardCanvas');
+  color = color || $('wbColor').value;
+  size = size || $('wbSize').value;
+  wbCtx.strokeStyle = color;
+  wbCtx.lineWidth = size;
+  wbCtx.lineCap = 'round';
+  wbCtx.beginPath();
+  wbCtx.moveTo(from.x * canvas.width, from.y * canvas.height);
+  wbCtx.lineTo(to.x * canvas.width, to.y * canvas.height);
+  wbCtx.stroke();
+}
+function emitStroke(from, to) {
+  socket.emit('whiteboard-draw', { from, to, color: $('wbColor').value, size: $('wbSize').value });
+}
+function drawRemote({ from, to, color, size }) {
+  strokeLocal(from, to, color, size);
+}
+function clearBoardLocal() {
+  const canvas = $('whiteboardCanvas');
+  wbCtx.clearRect(0, 0, canvas.width, canvas.height);
+}
+$('wbClear').onclick = () => { clearBoardLocal(); socket.emit('whiteboard-clear'); };
+$('wbBtn').onclick = () => {
+  wbActive = !wbActive;
+  $('whiteboardWrap').classList.toggle('active', wbActive);
+  $('wbBtn').classList.toggle('active-tool', wbActive);
+};
+</script>
+</body>
+</html>
